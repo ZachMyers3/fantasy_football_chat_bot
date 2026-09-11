@@ -147,6 +147,13 @@ Same text goes to every chat app you've configured; only the wrapping differs (D
 turns the first line into an embed title, Slack wraps the message in a code block,
 GroupMe sends it as-is).
 
+When using the Slack Web API mode (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL`), messages
+containing pipe tables (standings, scoreboards, waiver reports, power rankings) are also
+sent as **native Slack table blocks** via Block Kit, so they render as real HTML tables
+in the Slack client instead of monospaced text. The code-block text is always included as
+a fallback `text` field for clients that can't render blocks. Incoming webhooks don't
+support blocks, so they fall back to code-block-only rendering.
+
 <details>
 <summary><b>Trophies</b> - the weekly awards, sent Tuesday with final scores</summary>
 
@@ -340,7 +347,8 @@ Copy the **Webhook URL** - that's `SLACK_WEBHOOK_URL`.
   <summary><b>Slack (Web API - recommended)</b></summary>
 
 If you'd rather use a real Slack app bot token (so you can post to any channel your app
-is a member of, not just a single webhook), or you want @mentions and richer formatting:
+is a member of, not just a single webhook), or you want @mentions and richer formatting,
+including native **table blocks** for standings, scoreboards, and waiver reports:
 
 1. Create an app at [api.slack.com/apps/new](https://api.slack.com/apps/new) - name it and pick your workspace.
 2. In **OAuth & Permissions** → **Scopes**, add these bot token scopes:

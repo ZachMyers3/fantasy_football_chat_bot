@@ -179,3 +179,117 @@ class TestSlackTransportSelection:
         slack.send_message("hi")
         assert mock_requests.last_request.url == "https://hooks.slack.com/services/fb"
         assert "Authorization" not in mock_requests.last_request.headers
+
+
+class TestSlackTableBlocks:
+    """When the message contains a GFM pipe table, the Web API payload should
+    include a Block Kit ``table`` block so Slack renders a native HTML table."""
+
+    STANDINGS_TABLE = """Current Standings
+| #  | Team             | Record  |
+|----|------------------|---------|
+| 1  | Dynasty Kings    | 10-3    |
+| 2  | Gridiron Gods    | 9-4     |
+| 3  | The Victors      | 8-5     |"""
+
+    SCOREBOARD_TABLE = """Score Update
+| Home   | Score | Score | Away   |
+|--------|-------|-------|--------|
+| DKNG   | 120.34|  98.56| PNLF   |
+| GRDG   | 145.22| 134.18| VCTS   |"""
+
+    WAIVER_TABLE = """Waiver Report 2026-10-15
+| Team          | Action  | Player              | Bid  |
+|----------------|--------|---------------------|------|
+| Dynasty Kings  | ADDED  | Josh Allen          | $85  |
+| Dynasty Kings  | DROPPED| Gardner Minshew     |      |"""
+
+    TROPHIES_PLAIN = """Trophies of the week:
+👑 High score 👑
+Dynasty Kings with 187.34 points
+💩 Low score 💩
+Punt Life with 72.18 points"""
+
+    def test_table_block_sent_for_piped_table(self, slack, mock_requests):
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.STANDINGS_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        # The code-block text fallback is always present.
+        assert body["text"] == "```{0}```".format(self.STANDINGS_TABLE)
+        # And so is the table block.
+        assert "blocks" in body
+        table_block = body["blocks"][0]
+        assert table_block["type"] == "table"
+        assert table_block["block_id"] == "fantasy_table"
+        # Header row + 3 data rows = 4 rows
+        assert len(table_block["rows"]) == 4
+        # Header cells
+        assert table_block["rows"][0][0]["text"] == "#"
+        assert table_block["rows"][0][1]["text"] == "Team"
+        # Data row 1
+        assert table_block["rows"][1][0]["text"] == "1"
+        assert table_block["rows"][1][1]["text"] == "Dynasty Kings"
+
+    def test_table_block_scoreboard(self, slack, mock_requests):
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.SCOREBOARD_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        assert "blocks" in body
+        rows = body["blocks"][0]["rows"]
+        # Header + separator row is stripped → header + 2 data = 3 rows
+        assert len(rows) == 3
+        assert rows[0][0]["text"] == "Home"
+        assert rows[1][0]["text"] == "DKNG"
+
+    def test_table_block_waiver_report(self, slack, mock_requests):
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.WAIVER_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        rows = body["blocks"][0]["rows"]
+        # Header + 2 data rows = 3
+        assert len(rows) == 3
+        assert rows[1][2]["text"] == "Josh Allen"
+
+    def test_no_table_block_for_plain_text(self, slack, mock_requests):
+        """Non-tabular messages should NOT include a blocks array."""
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.TROPHIES_PLAIN)
+
+        body = json.loads(mock_requests.last_request.text)
+        assert "blocks" not in body
+        assert body["text"] == "```{0}```".format(self.TROPHIES_PLAIN)
+
+    def test_table_block_not_sent_for_webhook(self, mock_requests):
+        """Incoming webhooks don't support blocks; they get code-block only."""
+        slack = Slack("https://hooks.slack.com/services/test/T1/B1")
+        mock_requests.post("https://hooks.slack.com/services/test/T1/B1", status_code=200)
+        slack.send_message(self.STANDINGS_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        assert "blocks" not in body
+        assert body["text"] == "```{0}```".format(self.STANDINGS_TABLE)
+
+    def test_table_block_column_count_matches_header(self, slack, mock_requests):
+        """Every row is padded to the header column count."""
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.STANDINGS_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        n_cols = len(body["blocks"][0]["rows"][0])
+        for row in body["blocks"][0]["rows"]:
+            assert len(row) == n_cols
+
+    def test_table_block_column_settings(self, slack, mock_requests):
+        """Each column gets default left-aligned, no-wrap settings."""
+        mock_requests.post(SLACK_API_BASE + "/chat.postMessage", json={"ok": True})
+        slack.send_message(self.STANDINGS_TABLE)
+
+        body = json.loads(mock_requests.last_request.text)
+        settings = body["blocks"][0]["column_settings"]
+        assert len(settings) == 3
+        for s in settings:
+            assert s["align"] == "left"
+            assert s["is_wrapped"] is False
