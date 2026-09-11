@@ -2,10 +2,18 @@ import requests
 import json
 import logging
 import re
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 SLACK_API_BASE = "https://slack.com/api"
+
+# Trophy emojis used by the ESPN bot's trophy report.
+# Each trophy entry is an emoji-prefixed line (e.g. "👑 High score 👑").
+TROPHY_EMOJIS = [
+    "👑", "💩", "😱", "😅", "🍀", "😡",
+    "📈", "📉", "🟢", "🔻", "🟰",
+]
 
 
 class SlackException(Exception):
@@ -22,10 +30,11 @@ class Slack:
     2. Slack Web API (bot_token + channel): full messaging-service mode via
        chat.postMessage, using a Slack app bot token (xoxb-...) and a channel
        ID or name. Supports any channel the app's bot is a member of, plus
-       Slack Block Kit table blocks for rich table rendering.
+       Slack Block Kit for rich message rendering (tables, headers, dividers,
+       rich text, etc.).
 
     If a bot_token and channel are both provided, the Web API is used;
-    otherwise the message falls back to the webhook.
+    otherwise the message falls back to the webhook (code-block only).
 
     Parameters
     ----------
@@ -59,16 +68,28 @@ class Slack:
     def __repr__(self):
         return "Slack Webhook Url(%s)" % self.webhook_url
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def send_message(self, text: str):
         """
-        Sends a message to the Slack channel.
+        Send a message to the Slack channel.
 
-        When running in Web API mode, the message text is inspected: if it
-        contains a structured table (header line followed by pipe-separated
-        rows), the table is rendered as a Slack Block Kit ``table`` block for
-        rich rendering, and the plain-text code-block is included as a
-        fallback ``text`` field.  Plain messages continue to use the
-        triple-backtick code-block format that has always been used.
+        When running in Web API mode, the message text is inspected and
+        Block Kit blocks are generated for structured content:
+
+        * **Trophy reports** → ``header`` + ``rich_text`` + ``divider`` blocks
+        * **Waiver reports** → ``header`` + ``section`` blocks with mrkdwn
+          (bold team names, strikethrough for dropped players)
+        * **Piped tables** (GFM ``| col | col |``) → native Block Kit ``table``
+        * **Scoreboards** (aligned columns) → converted to pipe table → ``table``
+        * **Power Rankings** (aligned columns) → converted to pipe table →
+          ``table`` + ``context`` explaining trend emojis
+
+        The plain-text code-block is always included as the ``text`` field
+        fallback for clients that cannot render blocks.  Plain messages
+        without structured content use the triple-backtick code-block only.
 
         Parameters
         ----------
@@ -93,25 +114,18 @@ class Slack:
 
     def _use_web_api(self) -> bool:
         """True when a usable bot token and channel are both configured."""
-
         return (self.bot_token is not None and
                 self.bot_token not in (1, "1", '') and
                 self.channel is not None and
                 self.channel not in (1, "1", ''))
 
     # ------------------------------------------------------------------
-    # Block Kit table conversion
+    # Block Kit builders
     # ------------------------------------------------------------------
 
     @staticmethod
     def _parse_table(text: str):
-        """Parse a Slack-style pipe table from *text*.
-
-        Accepts the GitHub-Flavoured Markdown pipe-table syntax that the
-        repository's report generators already use::
-
-            | Team One     | 10-3 |
-            | Team Two     |  9-4 |
+        """Parse a GFM pipe table from *text*.
 
         Returns ``(headers, rows)`` where *headers* is a ``list[str]`` and
         *rows* is a ``list[list[str]]``, or ``None`` when the text does not
@@ -124,19 +138,15 @@ class Slack:
                 table_lines.append(ln)
 
         if len(table_lines) < 2:
-            # Need at least a header + separator row.
             return None
 
-        # Strip the outer pipes and split on the remaining pipes.
         def _cells(ln):
             ln = ln[1:-1] if ln.startswith('|') else ln
             return [c.strip() for c in ln.split('|')]
 
         rows = [_cells(ln) for ln in table_lines]
-        # The GFM separator row (dashes) marks the boundary between header
-        # and body.  If it's missing we fall back to treating the first row
-        # as a header.
-        if len(rows) >= 2 and all(re.match(r'^[:\-|]+$', c) for c in rows[1]):
+        # The GFM separator row (dashes) marks header/body boundary.
+        if len(rows) >= 2 and all(re.match(r'^[-:|]+$', c) for c in rows[1]):
             headers = rows[0]
             data_rows = rows[2:]
         else:
@@ -159,14 +169,10 @@ class Slack:
         }
 
         def _cell(value):
-            """Wrap a cell value as a plain_text table cell."""
             return {"type": "plain_text", "text": value}
 
-        # Header row
         block["rows"].append([_cell(h) for h in headers])
-        # Data rows
         for row in rows:
-            # Pad / truncate to header width
             row = (list(row) + [""] * len(headers))[:len(headers)]
             block["rows"].append([_cell(c) for c in row])
 
@@ -185,15 +191,304 @@ class Slack:
         return self._build_table_block(headers, rows)
 
     # ------------------------------------------------------------------
-    # Dispatch
+    # Trophy block formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_trophy_message(text: str) -> bool:
+        """Heuristic: does the message look like a trophy report?"""
+        stripped = text.strip()
+        if not stripped.startswith("Trophies of the week"):
+            return False
+        lines = [ln for ln in stripped.splitlines() if ln.strip()]
+        emoji_count = sum(1 for ln in lines if _starts_with_emoji(ln))
+        return emoji_count > 0
+
+    def _format_trophies(self, text: str) -> list:
+        """Build Block Kit blocks for a trophy report message.
+
+        Each trophy (emoji-prefixed header line) gets a ``header`` block
+        followed by a ``rich_text`` block for the detail line.  Trophies
+        are separated by ``divider`` blocks.
+        """
+        blocks = []
+        lines = text.splitlines()
+        title = lines[0] if lines else "Trophies of the week:"
+        blocks.append({
+            "type": "header",
+            "text": {"type": "plain_text", "text": title, "emoji": True},
+        })
+
+        current_trophy_header = None
+        current_detail = []
+        trophy_count = 0
+
+        for line in lines[1:]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            is_header = any(stripped.startswith(emoji) for emoji in TROPHY_EMOJIS)
+            if is_header:
+                if current_trophy_header is not None:
+                    trophy_count += 1
+                    if trophy_count > 1:
+                        blocks.append({"type": "divider"})
+                    blocks.append({
+                        "type": "header",
+                        "text": {"type": "plain_text",
+                                 "text": current_trophy_header, "emoji": True},
+                    })
+                    if current_detail:
+                        detail_text = " ".join(current_detail)
+                        blocks.append(self._rich_text_block(detail_text))
+                current_trophy_header = stripped
+                current_detail = []
+            else:
+                if current_trophy_header is not None:
+                    current_detail.append(stripped)
+
+        if current_trophy_header is not None:
+            trophy_count += 1
+            if trophy_count > 1:
+                blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "header",
+                "text": {"type": "plain_text",
+                         "text": current_trophy_header, "emoji": True},
+            })
+            if current_detail:
+                detail_text = " ".join(current_detail)
+                blocks.append(self._rich_text_block(detail_text))
+
+        return blocks if len(blocks) > 1 else []
+
+    @staticmethod
+    def _rich_text_block(text: str):
+        """Build a ``rich_text`` block from plain text."""
+        return {
+            "type": "rich_text",
+            "block_id": "trophy_detail",
+            "elements": [{
+                "type": "rich_text_section",
+                "elements": [{"type": "text", "text": text}],
+            }],
+        }
+
+    # ------------------------------------------------------------------
+    # Waiver report block formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_waiver_report(text: str) -> bool:
+        """Heuristic: does the message look like a waiver report?"""
+        return text.strip().startswith("Waiver Report")
+
+    def _format_waiver_report(self, text: str) -> list:
+        """Build Block Kit blocks for a waiver report.
+
+        Uses ``section`` blocks with ``mrkdwn`` text: bold team names,
+        ADDED lines with bold prefix, DROPPED lines with strikethrough.
+        """
+        lines = text.splitlines()
+        blocks = [{
+            "type": "header",
+            "text": {"type": "plain_text",
+                     "text": lines[0] if lines else "Waiver Report", "emoji": True},
+        }]
+
+        current_team = None
+        moves = []
+
+        for line in lines[1:]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if stripped.startswith("ADDED") or stripped.startswith("DROPPED"):
+                moves.append(self._format_waiver_move(stripped))
+            else:
+                # New team name — flush the previous team if there is one
+                if current_team is not None:
+                    blocks.append(self._waiver_section(current_team, moves))
+                current_team = stripped
+                moves = []
+
+        # Flush last team
+        if current_team is not None:
+            blocks.append(self._waiver_section(current_team, moves))
+
+        return blocks
+
+    @staticmethod
+    def _waiver_section(team: str, moves: list) -> dict:
+        """Build a ``section`` block for one team's waiver moves."""
+        move_text = f"*{team}*\n" + "\n".join(moves) if moves else f"*{team}*"
+        return {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": move_text},
+        }
+
+    @staticmethod
+    def _format_waiver_move(line: str) -> str:
+        """Format a single ADDED/DROPPED line with mrkdwn styling."""
+        if line.startswith("ADDED"):
+            return f"➕ *ADDED* {line[6:]}"
+        elif line.startswith("DROPPED"):
+            return f"➖ ~DROPPED~ {line[8:]}"
+        return line
+
+    # ------------------------------------------------------------------
+    # Scoreboard block formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_scoreboard(text: str) -> bool:
+        """Heuristic: does the message look like a scoreboard?"""
+        stripped = text.strip()
+        return stripped.startswith(("Score Update",
+                                    "Approximate Projected Scores"))
+
+    def _format_scoreboard(self, text: str) -> list:
+        """Build a Block Kit table block from a scoreboard-style message.
+
+        Parses lines like ``DKNG 120.34 -  98.56 PNLF`` into a 5-column
+        pipe table: | Home | Score |  | Score | Away |
+        """
+        lines = text.splitlines()
+        header = lines[0] if lines else "Scoreboard"
+        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
+
+        pipe_rows = ["| Home | Score | vs | Score | Away |",
+                     "|------|-------|-----|-------|------|"]
+        for line in data_lines:
+            match = re.match(r'(\S+)\s+([\d.]+)\s+-\s+([\d.]+)\s+(\S+)', line)
+            if match:
+                pipe_rows.append(
+                    f"| {match.group(1)} | {match.group(2)} | - "
+                    f"| {match.group(3)} | {match.group(4)} |"
+                )
+            else:
+                pipe_rows.append(f"| {line} | | | | |")
+
+        table_text = "\n".join(pipe_rows)
+        table_block = self._format_as_table(table_text)
+        if table_block is None:
+            return []
+
+        blocks = [{
+            "type": "header",
+            "text": {"type": "plain_text", "text": header, "emoji": True},
+        }]
+        blocks.append(table_block)
+        return blocks
+
+    # ------------------------------------------------------------------
+    # Power rankings block formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_power_rankings(text: str) -> bool:
+        """Heuristic: does the message look like a power rankings report?"""
+        return text.strip().startswith("Power Rankings")
+
+    def _format_power_rankings(self, text: str) -> list:
+        """Build Block Kit blocks for a power rankings message.
+
+        Creates a table block with columns: Rank, Score, Change, Playoff %, Team.
+        Adds a context block explaining the trend emojis.
+        """
+        lines = text.splitlines()
+        header = lines[0] if lines else "Power Rankings"
+        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
+
+        pipe_rows = ["| # | Score | Change | Playoff % | Team |",
+                     "|---|-------|--------|-----------|------|"]
+
+        rank = 1
+        for line in data_lines:
+            # Match: "99.99[🟢12.5%] (87.5) - DKNG"
+            match = re.match(
+                r'([\d.]+)\s*\[([^\]]*)\]\s*\(([\d.]+)\)\s*-\s*(\S+)', line
+            )
+            if match:
+                pipe_rows.append(
+                    f"| {rank} | {match.group(1)} | {match.group(2)} "
+                    f"| {match.group(3)} | {match.group(4)} |"
+                )
+            else:
+                pipe_rows.append(f"| {rank} | {line} | | | |")
+            rank += 1
+
+        table_text = "\n".join(pipe_rows)
+        table_block = self._format_as_table(table_text)
+
+        blocks = [{
+            "type": "header",
+            "text": {"type": "plain_text", "text": header, "emoji": True},
+        }]
+        if table_block:
+            blocks.append(table_block)
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": ":green_circle: up — :red_circle: down — :large_blue_circle: same",
+            }],
+        })
+        return blocks
+
+    # ------------------------------------------------------------------
+    # Block dispatch: decide which formatter to use
+    # ------------------------------------------------------------------
+
+    def _build_blocks(self, text: str) -> Optional[list]:
+        """Build a Block Kit ``blocks`` array from *text*, or None.
+
+        Tries each known message format in order of specificity.  Returns
+        the blocks list if any formatter matched, otherwise ``None``.
+        """
+        # 1. Pipe table (highest priority — most structured)
+        table_block = self._format_as_table(text)
+        if table_block is not None:
+            return [table_block]
+
+        # 2. Trophy report
+        if self._is_trophy_message(text):
+            trophy_blocks = self._format_trophies(text)
+            if trophy_blocks:
+                return trophy_blocks
+
+        # 3. Waiver report (non-table form)
+        if self._is_waiver_report(text):
+            waiver_blocks = self._format_waiver_report(text)
+            if waiver_blocks:
+                return waiver_blocks
+
+        # 4. Scoreboard (aligned-column form, not pipe table)
+        if self._is_scoreboard(text):
+            sb_blocks = self._format_scoreboard(text)
+            if sb_blocks:
+                return sb_blocks
+
+        # 5. Power rankings (aligned-column form, not pipe table)
+        if self._is_power_rankings(text):
+            pr_blocks = self._format_power_rankings(text)
+            if pr_blocks:
+                return pr_blocks
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Dispatch: actually send the message
     # ------------------------------------------------------------------
 
     def _send_via_web_api(self, text: str, message: str):
         """Post via chat.postMessage using a bot token.
 
-        When the message contains a structured table we additionally send a
-        ``blocks`` array containing a Block Kit ``table`` block, giving Slack
-        a native HTML table.  The ``text`` field (code-block wrapped) is always
+        When the message contains structured content (tables, trophies,
+        waiver reports, scoreboards, power rankings) we additionally send a
+        ``blocks`` array containing Block Kit blocks, giving Slack a rich
+        native rendering.  The ``text`` field (code-block wrapped) is always
         included as the fallback for clients that cannot render blocks.
         """
         payload = {
@@ -201,9 +496,9 @@ class Slack:
             "text": message  # limit 40000
         }
 
-        table_block = self._format_as_table(text)
-        if table_block is not None:
-            payload["blocks"] = [table_block]
+        blocks = self._build_blocks(text)
+        if blocks:
+            payload["blocks"] = blocks
 
         headers = {
             'Authorization': 'Bearer {0}'.format(self.bot_token),
@@ -225,8 +520,11 @@ class Slack:
         return r
 
     def _send_via_webhook(self, message: str):
-        """Post via a legacy incoming webhook."""
+        """Post via a legacy incoming webhook.
 
+        Incoming webhooks do not support the ``blocks`` array, so all
+        messages are sent as plain code-block text regardless of content.
+        """
         template = {
             "text": message  # limit 40000
         }
@@ -242,3 +540,22 @@ class Slack:
                 raise SlackException(r.content)
 
             return r
+
+
+# ------------------------------------------------------------------
+# Utility helpers
+# ------------------------------------------------------------------
+
+def _starts_with_emoji(text: str) -> bool:
+    """Return True if *text* starts with an emoji character."""
+    if not text:
+        return False
+    # Check common trophy/reporting emojis used in ESPN fantasy messages
+    trophy_emojis = [
+        "👑", "💩", "😱", "😅", "🍀", "😡",
+        "📈", "📉", "🟢", "🔻", "🟰",
+        "🏆", "🎯", "🔥", "🧊", "⚡", "🛡️",
+        "🔒", "🔧", "🟡", "🔴", "🔵", "🟠",
+        "🟢", "🔻", "🟣", "🏁", "🏈", "🏈",
+    ]
+    return any(text.startswith(emoji) for emoji in trophy_emojis)
