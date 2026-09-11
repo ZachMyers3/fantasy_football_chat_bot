@@ -6,8 +6,12 @@ services:
     environment:
       #Bot ID from the GroupMe developers page (REQUIRED IF USING GROUPME)
       BOT_ID: "1"
-      #Webhook URL from the Slack App page (REQUIRED IF USING SLACK)
+      #Webhook URL from the Slack App page (REQUIRED IF USING SLACK WEBHOOK)
       SLACK_WEBHOOK_URL: "1"
+      #Slack app bot token (starts with xoxb) for chat.postMessage mode (USE INSTEAD OF WEBHOOK)
+      SLACK_BOT_TOKEN: "1"
+      #Channel ID or name (e.g. #league) to post to via the Slack Web API
+      SLACK_CHANNEL: "1"
       #This is your Webhook URL from the Discord Settings page (REQUIRED IF USING DISCORD)
       DISCORD_WEBHOOK_URL: "1"
       #ESPN league id (REQUIRED)

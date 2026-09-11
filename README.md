@@ -333,6 +333,26 @@ Choose the channel to post in and click **Authorize**.
 Copy the **Webhook URL** - that's `SLACK_WEBHOOK_URL`.
 
 ![](https://i.imgur.com/mmzhDS0.png)
+
+</details>
+
+<details>
+  <summary><b>Slack (Web API - recommended)</b></summary>
+
+If you'd rather use a real Slack app bot token (so you can post to any channel your app
+is a member of, not just a single webhook), or you want @mentions and richer formatting:
+
+1. Create an app at [api.slack.com/apps/new](https://api.slack.com/apps/new) - name it and pick your workspace.
+2. In **OAuth & Permissions** → **Scopes**, add these bot token scopes:
+   - `chat:write` — post messages
+   - `chat:write.public` — post to public channels the app isn't in
+   - (optional) `channels:read`, `groups:read`, `users:read` — for nicer channel resolution
+3. Click **Install to Workspace** and copy the **Bot User OAuth Token** — that's `SLACK_BOT_TOKEN`.
+4. Note the channel you want posts in (e.g. `#league`) or get its ID — that's `SLACK_CHANNEL`.
+
+Set both `SLACK_BOT_TOKEN` and `SLACK_CHANNEL`. When both are set, the Web API mode is
+used. If only `SLACK_WEBHOOK_URL` is set, the bot falls back to the incoming webhook.
+Leave the other Slack variable unset.
 </details>
 
 <details>
@@ -393,7 +413,9 @@ the rest have defaults.
 |---|---|---|---|
 | `LEAGUE_ID` | **Yes** | - | Your ESPN league ID |
 | `BOT_ID` | For GroupMe | - | Bot ID from the GroupMe developers page |
-| `SLACK_WEBHOOK_URL` | For Slack | - | Incoming webhook URL from your Slack app |
+| `SLACK_WEBHOOK_URL` | For Slack (webhook) | - | Incoming webhook URL from your Slack app |
+| `SLACK_BOT_TOKEN` | For Slack (Web API) | - | Slack app bot token (starts with `xoxb-`) for `chat.postMessage` mode |
+| `SLACK_CHANNEL` | For Slack (Web API) | - | Channel ID or name (e.g. `#league`) to post to via the Web API |
 | `DISCORD_WEBHOOK_URL` | For Discord | - | Webhook URL from your Discord channel |
 | `LEAGUE_YEAR` | Recommended | `2026` | Season year. **Set it every season** - the default only tracks whichever season this release was cut for, and goes stale the moment the next one starts |
 | `START_DATE` | Recommended | `2026-09-10` | Bot stays silent before this date (`YYYY-MM-DD`) |

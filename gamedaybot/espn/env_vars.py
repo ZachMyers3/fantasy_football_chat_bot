@@ -64,6 +64,16 @@ def get_env_vars():
         slack_webhook_url = 1
 
     try:
+        slack_bot_token = os.environ["SLACK_BOT_TOKEN"]
+    except KeyError:
+        slack_bot_token = 1
+
+    try:
+        slack_channel = os.environ["SLACK_CHANNEL"]
+    except KeyError:
+        slack_channel = 1
+
+    try:
         discord_webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
         str_limit = 3000
     except KeyError:
@@ -71,14 +81,17 @@ def get_env_vars():
 
     if (len(str(bot_id)) <= 1 and
         len(str(slack_webhook_url)) <= 1 and
-            len(str(discord_webhook_url)) <= 1):
+        len(str(slack_bot_token)) <= 1 and
+        len(str(discord_webhook_url)) <= 1):
         # Ensure that there's info for at least one messaging platform,
         # use length of str in case of blank but non null env variable
-        raise Exception("No messaging platform info provided. Be sure one of BOT_ID, SLACK_WEBHOOK_URL, or DISCORD_WEBHOOK_URL env variables are set")
+        raise Exception("No messaging platform info provided. Be sure one of BOT_ID, SLACK_WEBHOOK_URL, SLACK_BOT_TOKEN, or DISCORD_WEBHOOK_URL env variables are set")
 
     data['str_limit'] = str_limit
     data['bot_id'] = bot_id
     data['slack_webhook_url'] = slack_webhook_url
+    data['slack_bot_token'] = slack_bot_token
+    data['slack_channel'] = slack_channel
     data['discord_webhook_url'] = discord_webhook_url
 
     data['league_id'] = os.environ["LEAGUE_ID"]

@@ -95,6 +95,16 @@ def espn_bot(function):
         slack_webhook_url = 1
 
     try:
+        slack_bot_token = data['slack_bot_token']
+    except KeyError:
+        slack_bot_token = 1
+
+    try:
+        slack_channel = data['slack_channel']
+    except KeyError:
+        slack_channel = 1
+
+    try:
         discord_webhook_url = data['discord_webhook_url']
     except KeyError:
         discord_webhook_url = 1
@@ -134,7 +144,7 @@ def espn_bot(function):
         close_scores_threshold = espn.CLOSE_SCORES_DEFAULT_THRESHOLD
 
     groupme_bot = GroupMe(bot_id)
-    slack_bot = Slack(slack_webhook_url)
+    slack_bot = Slack(slack_webhook_url, bot_token=slack_bot_token, channel=slack_channel)
     discord_bot = Discord(discord_webhook_url)
 
     if swid == '{1}' or espn_s2 == '1':
