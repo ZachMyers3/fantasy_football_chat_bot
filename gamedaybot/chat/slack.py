@@ -13,6 +13,7 @@ SLACK_API_BASE = "https://slack.com/api"
 TROPHY_EMOJIS = [
     "👑", "💩", "😱", "😅", "🍀", "😡",
     "📈", "📉", "🟢", "🔻", "🟰",
+    "🤖", "🤡",
     # Emoji shortcodes may appear as text (e.g., from Slack rendering)
     ":chart_with_downwards_trend:",
 ]
@@ -413,15 +414,22 @@ class Slack:
 
         rank = 1
         for line in data_lines:
-            # Match: "99.99[🟢12.5%] (87.5) - DKNG"
+            # Match two possible formats:
+            # 1. Week 1 (no previous week data): "0.00 (52.7) - tLAW"
+            # 2. With trend: "99.99[🟢12.5%] (87.5) - DKNG"
             match = re.match(
-                r'([\d.]+)\s*\[([^\]]*)\]\s*\(([\d.]+)\)\s*-\s*(\S+)', line
+                r'([\d.]+)\s*(?:\[([^\]]*)\]\s*)?\(([\d.]+)\)\s*-\s*(\S+)', line
             )
             if match:
+                score = match.group(1)
+                change = match.group(2) if match.group(2) else ""
+                playoff_pct = match.group(3)
+                team = match.group(4)
                 pipe_rows.append(
-                    f"| {rank} | {match.group(1)} | {match.group(2)} "
-                    f"| {match.group(3)} | {match.group(4)} |"
+                    f"| {rank} | {score} | {change} "
+                    f"| {playoff_pct} | {team} |"
                 )
+                rank += 1
             # Skip non-matching lines to avoid empty cells
 
         table_text = "\n".join(pipe_rows)
@@ -688,6 +696,7 @@ def _starts_with_emoji(text: str) -> bool:
         "🏆", "🎯", "🔥", "🧊", "⚡", "🛡️",
         "🔒", "🔧", "🟡", "🔴", "🔵", "🟠",
         "🟢", "🔻", "🟣", "🏁", "🏈", "🏈",
+        "🤖", "🤡",
         # Emoji shortcodes that may appear as literal text
         ":chart_with_downwards_trend:",
     ]

@@ -297,9 +297,48 @@ class TestSlackTrophyBlocks:
         # Each rich_text block must have a unique block_id
         rich_text_blocks = [b for b in blocks if b.get("type") == "rich_text"]
         rich_ids = [b.get("block_id") for b in rich_text_blocks]
-        assert len(rich_ids) == len(set(rich_ids)), (
+        assert len(rich_ids) == len(set(rich_ids)), (\
             f"Duplicate rich_text block_ids: {rich_ids}"
         )
+
+    def test_trophy_robot_emoji_detected(self, slack_web_api):
+        """The 🤖 emoji (Best Managers) should be detected as a trophy header."""
+        from gamedaybot.chat.slack import _starts_with_emoji, TROPHY_EMOJIS
+        assert "🤖" in TROPHY_EMOJIS
+        assert _starts_with_emoji("🤖 Best Managers 🤖") is True
+
+    def test_trophy_clown_emoji_detected(self, slack_web_api):
+        """The 🤡 emoji (Worst Manager) should be detected as a trophy header."""
+        from gamedaybot.chat.slack import _starts_with_emoji, TROPHY_EMOJIS
+        assert "🤡" in TROPHY_EMOJIS
+        assert _starts_with_emoji("🤡 Worst Manager 🤡") is True
+
+    def test_trophies_after_underachiever(self, slack_web_api):
+        """Trophy headers after the 🟩/📉 Underachiever line should still be detected.
+
+        Regression test for the bug where 🤖 Best Managers and 🤡 Worst Manager
+        lines were absorbed into the Underachiever's detail block.
+        """
+        text = (
+            "Trophies of the week:\n"
+            "👑 High score 👑\n"
+            "Ben's team won\n"
+            "💩 Low score 💩\n"
+            "Someone lost bad\n"
+            "📉 Underachiever 📉\n"
+            "Virtue Signal was under their projection\n"
+            "🤖 Best Managers 🤖\n"
+            "Chippy's Pickle Chuckler, Scireland Smooth Brains\n"
+            "🤡 Worst Manager 🤡\n"
+            "I AM THE LAW left 0.00 points on bench"
+        )
+        blocks = slack_web_api._format_trophies(text)
+        headers = [b for b in blocks if b.get("type") == "header"]
+        header_texts = [h["text"]["text"] for h in headers]
+        # All trophy headers must be present, including after Underachiever
+        assert "🤖 Best Managers 🤖" in header_texts
+        assert "🤡 Worst Manager 🤡" in header_texts
+        assert "📉 Underachiever 📉" in header_texts
 
 
 # ------------------------------------------------------------------
@@ -437,6 +476,30 @@ class TestSlackPowerRankingsBlocks:
         blocks = slack_web_api._format_power_rankings(text)
         assert blocks[0]["type"] == "header"
         assert "Power Rankings" in blocks[0]["text"]["text"]
+
+    def test_power_rankings_week1_no_trend_brackets(self, slack_web_api):
+        """Week 1 format (no trend brackets) should still parse into a table.
+
+        When there's no previous week data, ESPN outputs:
+        \"0.00 (52.7) - tLAW\"  (no [bracket] section)
+        """
+        text = (
+            "Power Rankings (Playoff %)\n"
+            "0.00 (52.7) - tLAW\n"
+            "0.00 (51.1) - JJJJ\n"
+            "0.00 (61.6) - CICC"
+        )
+        blocks = slack_web_api._format_power_rankings(text)
+        table_blocks = [b for b in blocks if b.get("type") == "table"]
+        assert len(table_blocks) == 1
+        rows = table_blocks[0]["rows"]
+        # header + 3 data rows
+        assert len(rows) == 4
+        # Verify data was parsed
+        assert rows[1][4]["text"] == "tLAW"
+        assert rows[1][3]["text"] == "52.7"
+        assert rows[2][4]["text"] == "JJJJ"
+        assert rows[3][4]["text"] == "CICC"
 
     def test_power_rankings_send_message_via_web_api(self, slack_web_api):
         """Sending power rankings via Web API should include blocks."""
