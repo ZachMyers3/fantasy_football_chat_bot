@@ -174,6 +174,10 @@ class Slack:
         }
 
         def _cell(value):
+            # Slack's raw_text type rejects empty text ("must be more than
+            # 0 characters").  Use a visible placeholder for empty cells.
+            if not value or not value.strip():
+                value = "—"
             return {"type": "raw_text", "text": value}
 
         block["rows"].append([_cell(h) for h in headers])

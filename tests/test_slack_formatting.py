@@ -478,10 +478,10 @@ class TestSlackPowerRankingsBlocks:
         assert "Power Rankings" in blocks[0]["text"]["text"]
 
     def test_power_rankings_week1_no_trend_brackets(self, slack_web_api):
-        """Week 1 format (no trend brackets) should still parse into a table.
+        """Week 1 format (no previous week data) should still parse into a table.
 
         When there's no previous week data, ESPN outputs:
-        \"0.00 (52.7) - tLAW\"  (no [bracket] section)
+        "0.00 (52.7) - tLAW"  (no [bracket] section)
         """
         text = (
             "Power Rankings (Playoff %)\n"
@@ -500,6 +500,29 @@ class TestSlackPowerRankingsBlocks:
         assert rows[1][3]["text"] == "52.7"
         assert rows[2][4]["text"] == "JJJJ"
         assert rows[3][4]["text"] == "CICC"
+        # Empty "Change" cells should use em-dash placeholder (Slack rejects empty text)
+        assert rows[1][2]["text"] == "—"
+        assert rows[2][2]["text"] == "—"
+
+    def test_power_rankings_no_empty_raw_text_cells(self, slack_web_api):
+        """Slack's raw_text type rejects empty text — all cells must be non-empty.
+
+        Regression test for the invalid_blocks error that occurred when the
+        'Change' column was empty (week 1 with no trend data).
+        """
+        text = (
+            "Power Rankings\n"
+            "0.00 (52.7) - tLAW\n"
+            "0.00 (51.1) - JJJJ"
+        )
+        blocks = slack_web_api._format_power_rankings(text)
+        table_block = next(b for b in blocks if b.get("type") == "table")
+        for row in table_block["rows"]:
+            for cell in row:
+                assert cell["type"] == "raw_text"
+                assert len(cell["text"]) > 0, (
+                    f"Empty text in cell: {cell}"
+                )
 
     def test_power_rankings_send_message_via_web_api(self, slack_web_api):
         """Sending power rankings via Web API should include blocks."""
