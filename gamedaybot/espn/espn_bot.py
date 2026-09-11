@@ -111,10 +111,11 @@ def espn_bot(function):
 
     if (len(str(bot_id)) <= 1 and
         len(str(slack_webhook_url)) <= 1 and
-            len(str(discord_webhook_url)) <= 1):
+        len(str(slack_bot_token)) <= 1 and
+        len(str(discord_webhook_url)) <= 1):
         # Ensure that there's info for at least one messaging platform,
         # use length of str in case of blank but non null env variable
-        raise Exception("No messaging platform info provided. Be sure one of BOT_ID, SLACK_WEBHOOK_URL, or DISCORD_WEBHOOK_URL env variables are set")
+        raise Exception("No messaging platform info provided. Be sure one of BOT_ID, SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, or DISCORD_WEBHOOK_URL env variables are set")
 
     league_id = data['league_id']
 
