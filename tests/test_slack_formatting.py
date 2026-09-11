@@ -529,6 +529,35 @@ class TestSlackMatchupsAndStandingsBlocks:
         assert rows[1][0]["text"] == "Shelva's Street Sharks"
         assert rows[1][2]["text"] == "Chippy's Pickle Chuckler"
 
+    def test_matchups_split_into_multiple_tables(self, slack_web_api):
+        """Matchups with both name and abbrev sections should produce two table blocks."""
+        text = (
+            "Matchups\n"
+            "Shelva's Street Sharks vs Chippy's Pickle Chuckler\n"
+            "\n"
+            "DKNG (0-0) vs (0-0) PNLF"
+        )
+        blocks = slack_web_api._format_matchups(text)
+        table_blocks = [b for b in blocks if b.get("type") == "table"]
+        assert len(table_blocks) == 2
+        # First table: full names
+        assert table_blocks[0]["rows"][0][0]["text"] == "Home"
+        # Second table: abbreviations with records
+        assert table_blocks[1]["rows"][0][0]["text"] == "Home"
+        assert table_blocks[1]["rows"][0][1]["text"] == "Record"
+
+    def test_matchups_table_block_ids_unique(self, slack_web_api):
+        """Matchups with multiple tables must have unique block_ids per table."""
+        text = (
+            "Matchups\n"
+            "Team A vs Team B\n"
+            "\n"
+            "DKNG (1-0) vs (0-1) PNLF"
+        )
+        blocks = slack_web_api._format_matchups(text)
+        table_ids = [b.get("block_id") for b in blocks if b.get("type") == "table"]
+        assert len(table_ids) == len(set(table_ids))
+
     def test_matchups_header_block(self, slack_web_api):
         """First block should be a header with 'Matchups'."""
         text = "Matchups\nTeam A vs Team B"
@@ -600,6 +629,82 @@ class TestSlackMatchupsAndStandingsBlocks:
         blocks = slack_web_api._build_blocks(text)
         ids = [b.get("block_id") for b in blocks if b.get("block_id")]
         assert len(ids) == len(set(ids))
+
+
+# ------------------------------------------------------------------
+# 7b. Trophy edge-case tests (shortcode emoji handling)
+# ------------------------------------------------------------------
+
+class TestSlackTrophyEdgeCases:
+    """Tests for trophy formatting edge cases, especially emoji shortcodes."""
+
+    def test_trophy_with_chart_downwards_trend_shortcode(self, slack_web_api):
+        """Trophy lines using :chart_with_downwards_trend: shortcode should be detected as headers."""
+        text = (
+            "Trophies of the week:\n"
+            ":chart_with_downwards_trend: Underachiever :chart_with_downwards_trend:\n"
+            "Team X had the lowest score.\n"
+            "👑 High score 👑\n"
+            "DKNG won big."
+        )
+        blocks = slack_web_api._format_trophies(text)
+        # Should produce: title header + 2 trophy headers (underachiever + high score)
+        headers = [b for b in blocks if b.get("type") == "header"]
+        assert len(headers) >= 3  # title + 2 trophy headers
+
+    def test_starts_with_emoji_detects_shortcode(self):
+        """_starts_with_emoji should detect :chart_with_downwards_trend: shortcode."""
+        from gamedaybot.chat.slack import _starts_with_emoji
+        assert _starts_with_emoji(":chart_with_downwards_trend: Underachiever") is True
+
+    def test_trophy_shortcode_header_after_underachiever(self, slack_web_api):
+        """After a trophy with shortcode emoji, subsequent trophy headers should still work."""
+        text = (
+            "Trophies of the week:\n"
+            ":chart_with_downwards_trend: Underachiever :chart_with_downwards_trend:\n"
+            "Team X flopped.\n"
+            "👑 High score 👑\n"
+            "DKNG crushed it."
+        )
+        blocks = slack_web_api._format_trophies(text)
+        # Verify we have rich_text blocks for both trophy details
+        rich_text_blocks = [b for b in blocks if b.get("type") == "rich_text"]
+        assert len(rich_text_blocks) == 2
+        # Verify block_ids are still unique
+        ids = [b.get("block_id") for b in rich_text_blocks]
+        assert len(ids) == len(set(ids))
+
+    def test_trophy_with_multiple_emoji_variants(self, slack_web_api):
+        """Trophy headers with various emoji styles should all be detected."""
+        text = (
+            "Trophies of the week:\n"
+            "📉 Underachiever 📉\n"
+            "Team X had a bad week.\n"
+            "💩 Lowest score 💩\n"
+            "Team Y scored poorly."
+        )
+        blocks = slack_web_api._format_trophies(text)
+        headers = [b for b in blocks if b.get("type") == "header"]
+        assert len(headers) >= 3  # title + 2 trophy headers
+
+    def test_trophy_all_block_ids_unique_with_many_trophies(self, slack_web_api):
+        """With 5+ trophies, all block_ids must be unique."""
+        text_lines = ["Trophies of the week:"]
+        trophies = [
+            ("👑 High score 👑", "Team A won big."),
+            ("💩 Lowest score 💩", "Team B lost bad."),
+            (":chart_with_downwards_trend: Underachiever :chart_with_downwards_trend:", "Team C flopped."),
+            ("🔥 Most points 🔥", "Team D scored a lot."),
+            ("📈 Biggest improvement 📈", "Team E climbed."),
+        ]
+        for header, detail in trophies:
+            text_lines.append(header)
+            text_lines.append(detail)
+        text = "\n".join(text_lines)
+
+        blocks = slack_web_api._format_trophies(text)
+        all_ids = [b.get("block_id") for b in blocks if b.get("block_id")]
+        assert len(all_ids) == len(set(all_ids)), f"Duplicate block_ids: {all_ids}"
 
 
 # ------------------------------------------------------------------

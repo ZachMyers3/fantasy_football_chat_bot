@@ -13,6 +13,8 @@ SLACK_API_BASE = "https://slack.com/api"
 TROPHY_EMOJIS = [
     "👑", "💩", "😱", "😅", "🍀", "😡",
     "📈", "📉", "🟢", "🔻", "🟰",
+    # Emoji shortcodes may appear as text (e.g., from Slack rendering)
+    ":chart_with_downwards_trend:",
 ]
 
 
@@ -452,34 +454,70 @@ class Slack:
     def _format_matchups(self, text: str) -> list:
         """Build Block Kit blocks for a matchups message.
 
-        Parses lines like ``Team A vs Team B`` into a 3-column table:
-        | Home | vs | Away |
+        The matchups text has two sections separated by a blank line:
+        1. Full team names: ``Team A vs Team B``
+        2. Abbreviations with records: ``DKNG (0-0) vs (0-0) PNLF``
+
+        Each section is rendered as its own table block for clarity.
         """
         lines = text.splitlines()
-        header = lines[0] if lines else "Matchups"
-        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
-
-        pipe_rows = ["| Home | vs | Away |",
-                     "|------|----|-----|"]
-        for line in data_lines:
-            match = re.match(r'(.+?)\s+(?:vs|@)\s+(.+)', line)
-            if match:
-                pipe_rows.append(
-                    f"| {match.group(1).strip()} | vs | {match.group(2).strip()} |"
-                )
-            # Skip non-matching lines
-
-        table_text = "\n".join(pipe_rows)
-        table_block = self._format_as_table(table_text)
-        if table_block is None:
-            return []
+        header_text = lines[0] if lines else "Matchups"
 
         blocks = [{
             "type": "header",
-            "text": {"type": "plain_text", "text": header, "emoji": True},
+            "text": {"type": "plain_text", "text": header_text, "emoji": True},
         }]
-        blocks.append(table_block)
-        return blocks
+
+        # Split into sections by blank lines; the first line is the header.
+        sections = []
+        current = []
+        for line in lines[1:]:
+            if not line.strip():
+                if current:
+                    sections.append(current)
+                    current = []
+            else:
+                current.append(line.strip())
+        if current:
+            sections.append(current)
+
+        table_index = 0
+        for section_lines in sections:
+            # Determine column set for this section
+            pipe_rows = []
+            for line in section_lines:
+                match = re.match(r'(.+?)\s+(?:vs|@)\s+(.+)', line)
+                if match:
+                    home = match.group(1).strip()
+                    away = match.group(2).strip()
+                    # Extract records from abbrev section (e.g., "DKNG (0-0) vs (0-0) PNLF")
+                    rec_match = re.match(r'(.+?)\s+\(([^)]*)\)\s+(?:vs|@)\s+\(([^)]*)\)\s+(.+)', line)
+                    if rec_match:
+                        # Abbreviations with records section
+                        if not pipe_rows:
+                            pipe_rows.append("| Home | Record | vs | Record | Away |")
+                            pipe_rows.append("|------|--------|----|--------|------|")
+                        pipe_rows.append(
+                            f"| {rec_match.group(1)} | {rec_match.group(2)} | vs "
+                            f"| {rec_match.group(3)} | {rec_match.group(4)} |"
+                        )
+                    else:
+                        # Full team names section
+                        if not pipe_rows:
+                            pipe_rows.append("| Home | vs | Away |")
+                            pipe_rows.append("|------|----|-----|")
+                        pipe_rows.append(f"| {home} | vs | {away} |")
+
+            if pipe_rows:
+                table_text = "\n".join(pipe_rows)
+                table_block = self._format_as_table(table_text)
+                if table_block:
+                    # Ensure unique block_id per table
+                    table_block["block_id"] = f"fantasy_table_{table_index}"
+                    blocks.append(table_block)
+                    table_index += 1
+
+        return blocks if len(blocks) > 1 else []
 
     # ------------------------------------------------------------------
     # Standings block formatting
@@ -650,5 +688,7 @@ def _starts_with_emoji(text: str) -> bool:
         "🏆", "🎯", "🔥", "🧊", "⚡", "🛡️",
         "🔒", "🔧", "🟡", "🔴", "🔵", "🟠",
         "🟢", "🔻", "🟣", "🏁", "🏈", "🏈",
+        # Emoji shortcodes that may appear as literal text
+        ":chart_with_downwards_trend:",
     ]
     return any(text.startswith(emoji) for emoji in trophy_emojis)
