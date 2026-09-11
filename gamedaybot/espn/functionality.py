@@ -660,6 +660,10 @@ def get_power_rankings(league, week=None):
         if not rankings:
             return []
         max_score = max(float(score) for score, _ in rankings)
+        if max_score == 0:
+            # All scores are zero (e.g., week 1 before any games are played).
+            # Avoid ZeroDivisionError; return all teams at 0.00.
+            return [("0.00", team) for _, team in rankings]
         return [(f"{99.99 * float(score) / max_score:.2f}", team) for score, team in rankings]
 
 
