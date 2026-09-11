@@ -169,7 +169,7 @@ class Slack:
         }
 
         def _cell(value):
-            return {"type": "plain_text", "text": value}
+            return {"type": "raw_text", "text": value}
 
         block["rows"].append([_cell(h) for h in headers])
         for row in rows:
