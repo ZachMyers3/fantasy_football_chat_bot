@@ -269,13 +269,37 @@ class TestSlackTrophyBlocks:
         """Sending a trophy report via Web API should include blocks."""
         with patch("gamedaybot.chat.slack.requests.post") as mock_post:
             mock_post.return_value = make_mock_response(
-                200, {"ok": True, "channel": "C12345", "ts": "123.456"}
+                200, {"ok": True, "channel": "C12345", "ts": "12345.67890"}
             )
             text = "Trophies of the week:\n👑 High score 👑\nDKNG won."
             slack_web_api.send_message(text)
             sent = json.loads(mock_post.call_args[1]["data"])
             assert "blocks" in sent
             assert len(sent["blocks"]) >= 2
+
+    def test_trophy_block_ids_are_unique(self, slack_web_api):
+        """Each trophy detail block must have a unique block_id."""
+        text = (
+            "Trophies of the week:\n"
+            "👑 High score 👑\n"
+            "DKNG won big.\n"
+            "💩 Lowest score 💩\n"
+            "PNLF lost badly.\n"
+            "🔥 Most points 🔥\n"
+            "TEAM3 had a huge game."
+        )
+        blocks = slack_web_api._format_trophies(text)
+        block_ids = [b.get("block_id") for b in blocks if b.get("block_id")]
+        # All block_ids must be unique
+        assert len(block_ids) == len(set(block_ids)), (
+            f"Duplicate block_ids found: {block_ids}"
+        )
+        # Each rich_text block must have a unique block_id
+        rich_text_blocks = [b for b in blocks if b.get("type") == "rich_text"]
+        rich_ids = [b.get("block_id") for b in rich_text_blocks]
+        assert len(rich_ids) == len(set(rich_ids)), (
+            f"Duplicate rich_text block_ids: {rich_ids}"
+        )
 
 
 # ------------------------------------------------------------------

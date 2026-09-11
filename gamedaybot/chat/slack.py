@@ -240,7 +240,7 @@ class Slack:
                     })
                     if current_detail:
                         detail_text = " ".join(current_detail)
-                        blocks.append(self._rich_text_block(detail_text))
+                        blocks.append(self._rich_text_block(detail_text, trophy_count - 1))
                 current_trophy_header = stripped
                 current_detail = []
             else:
@@ -258,16 +258,20 @@ class Slack:
             })
             if current_detail:
                 detail_text = " ".join(current_detail)
-                blocks.append(self._rich_text_block(detail_text))
+                blocks.append(self._rich_text_block(detail_text, trophy_count - 1))
 
         return blocks if len(blocks) > 1 else []
 
-    @staticmethod
-    def _rich_text_block(text: str):
-        """Build a ``rich_text`` block from plain text."""
+    def _rich_text_block(self, text: str, index: int = 0):
+        """Build a ``rich_text`` block from plain text.
+
+        The *index* parameter is used to generate a unique ``block_id`` for
+        each trophy detail, satisfying Slack's requirement that block_ids be
+        unique within a message.
+        """
         return {
             "type": "rich_text",
-            "block_id": "trophy_detail",
+            "block_id": f"trophy_detail_{index}",
             "elements": [{
                 "type": "rich_text_section",
                 "elements": [{"type": "text", "text": text}],
