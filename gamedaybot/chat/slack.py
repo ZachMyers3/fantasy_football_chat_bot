@@ -367,8 +367,7 @@ class Slack:
                     f"| {match.group(1)} | {match.group(2)} | - "
                     f"| {match.group(3)} | {match.group(4)} |"
                 )
-            else:
-                pipe_rows.append(f"| {line} | | | | |")
+            # Skip non-matching lines (e.g., secondary section headers) to avoid empty cells
 
         table_text = "\n".join(pipe_rows)
         table_block = self._format_as_table(table_text)
@@ -415,9 +414,7 @@ class Slack:
                     f"| {rank} | {match.group(1)} | {match.group(2)} "
                     f"| {match.group(3)} | {match.group(4)} |"
                 )
-            else:
-                pipe_rows.append(f"| {rank} | {line} | | | |")
-            rank += 1
+            # Skip non-matching lines to avoid empty cells
 
         table_text = "\n".join(pipe_rows)
         table_block = self._format_as_table(table_text)
