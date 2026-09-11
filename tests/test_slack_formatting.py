@@ -146,6 +146,10 @@ class TestSlackTableBlocks:
         assert block is not None
         assert block["type"] == "table"
         assert len(block["rows"]) == 2  # header + 1 data row
+        # All cells must use 'raw_text' type, not 'plain_text'
+        for row in block["rows"]:
+            for cell in row:
+                assert cell["type"] == "raw_text"
 
     def test_columns_are_consistent(self, slack_web_api):
         """All rows should have the same number of columns as headers."""
