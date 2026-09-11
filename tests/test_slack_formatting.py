@@ -507,7 +507,103 @@ class TestSlackScoreboardBlocks:
 
 
 # ------------------------------------------------------------------
-# 7. Block dispatch and edge case tests
+# 7. Matchups and standings block formatting tests
+# ------------------------------------------------------------------
+
+class TestSlackMatchupsAndStandingsBlocks:
+    """Tests for matchups and standings Block Kit formatting."""
+
+    def test_matchups_gets_table_block(self, slack_web_api):
+        """Matchups messages should produce a header + table block."""
+        text = (
+            "Matchups\n"
+            "Shelva's Street Sharks vs Chippy's Pickle Chuckler\n"
+            "Mines Stomach Hurts vs Scireland Smooth Brains"
+        )
+        blocks = slack_web_api._format_matchups(text)
+        assert len(blocks) >= 2
+        table_blocks = [b for b in blocks if b.get("type") == "table"]
+        assert len(table_blocks) == 1
+        rows = table_blocks[0]["rows"]
+        assert len(rows) == 3  # header + 2 matchups
+        assert rows[1][0]["text"] == "Shelva's Street Sharks"
+        assert rows[1][2]["text"] == "Chippy's Pickle Chuckler"
+
+    def test_matchups_header_block(self, slack_web_api):
+        """First block should be a header with 'Matchups'."""
+        text = "Matchups\nTeam A vs Team B"
+        blocks = slack_web_api._format_matchups(text)
+        assert blocks[0]["type"] == "header"
+        assert blocks[0]["text"]["text"] == "Matchups"
+
+    def test_matchups_detected(self, slack_web_api):
+        """Matchups messages should be detected by the heuristic."""
+        text = "Matchups\nTeam A vs Team B"
+        assert slack_web_api._is_matchups(text) is True
+
+    def test_standings_gets_table_block(self, slack_web_api):
+        """Standings messages should produce a header + table block."""
+        text = (
+            "Current Standings\n"
+            " 1: (0-0) Scireland Smooth Brains \n"
+            " 2: (0-0) Space Rocks not Math Blocks "
+        )
+        blocks = slack_web_api._format_standings(text)
+        assert len(blocks) >= 2
+        table_blocks = [b for b in blocks if b.get("type") == "table"]
+        assert len(table_blocks) == 1
+        rows = table_blocks[0]["rows"]
+        assert len(rows) == 3  # header + 2 teams
+        assert rows[1][0]["text"] == "1"
+        assert rows[1][1]["text"] == "0-0"
+        assert rows[1][2]["text"] == "Scireland Smooth Brains"
+
+    def test_standings_header_block(self, slack_web_api):
+        """First block should be a header with 'Current Standings'."""
+        text = "Current Standings\n1: (0-0) Team A"
+        blocks = slack_web_api._format_standings(text)
+        assert blocks[0]["type"] == "header"
+        assert blocks[0]["text"]["text"] == "Current Standings"
+
+    def test_standings_detected(self, slack_web_api):
+        """Standings messages should be detected by the heuristic."""
+        text = "Current Standings\n1: (0-0) Team A"
+        assert slack_web_api._is_standings(text) is True
+
+    def test_matchups_send_message_via_web_api(self, slack_web_api):
+        """Sending matchups via Web API should include blocks."""
+        with patch("gamedaybot.chat.slack.requests.post") as mock_post:
+            mock_post.return_value = make_mock_response(
+                200, {"ok": True, "channel": "C12345", "ts": "123.456"}
+            )
+            text = "Matchups\nTeam A vs Team B"
+            slack_web_api.send_message(text)
+            sent = json.loads(mock_post.call_args[1]["data"])
+            assert "blocks" in sent
+            assert len(sent["blocks"]) >= 2
+
+    def test_standings_send_message_via_web_api(self, slack_web_api):
+        """Sending standings via Web API should include blocks."""
+        with patch("gamedaybot.chat.slack.requests.post") as mock_post:
+            mock_post.return_value = make_mock_response(
+                200, {"ok": True, "channel": "C12345", "ts": "123.456"}
+            )
+            text = "Current Standings\n1: (0-0) Team A"
+            slack_web_api.send_message(text)
+            sent = json.loads(mock_post.call_args[1]["data"])
+            assert "blocks" in sent
+            assert len(sent["blocks"]) >= 2
+
+    def test_all_block_ids_unique_in_matchups_and_standings(self, slack_web_api):
+        """Table block_ids must be unique within a message."""
+        text = "Matchups\nTeam A vs Team B\nTeam C vs Team D"
+        blocks = slack_web_api._build_blocks(text)
+        ids = [b.get("block_id") for b in blocks if b.get("block_id")]
+        assert len(ids) == len(set(ids))
+
+
+# ------------------------------------------------------------------
+# 8. Block dispatch and edge case tests
 # ------------------------------------------------------------------
 
 class TestSlackBlockDispatch:

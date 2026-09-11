@@ -86,6 +86,8 @@ class Slack:
         * **Scoreboards** (aligned columns) → converted to pipe table → ``table``
         * **Power Rankings** (aligned columns) → converted to pipe table →
           ``table`` + ``context`` explaining trend emojis
+        * **Matchups** → table with Home/vs/Away columns
+        * **Standings** → table with Rank/Record/Team columns
 
         The plain-text code-block is always included as the ``text`` field
         fallback for clients that cannot render blocks.  Plain messages
@@ -161,7 +163,7 @@ class Slack:
         """Build a Slack Block Kit ``table`` block dict from headers + rows."""
         block = {
             "type": "table",
-            "block_id": "fantasy_table",
+            "block_id": "fantasy_table_0",
             "column_settings": [
                 {"align": "left", "is_wrapped": False}
             ] * len(headers),
@@ -439,8 +441,86 @@ class Slack:
         return blocks
 
     # ------------------------------------------------------------------
-    # Block dispatch: decide which formatter to use
+    # Matchups block formatting
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_matchups(text: str) -> bool:
+        """Heuristic: does the message look like a matchups report?"""
+        return text.strip().startswith("Matchups")
+
+    def _format_matchups(self, text: str) -> list:
+        """Build Block Kit blocks for a matchups message.
+
+        Parses lines like ``Team A vs Team B`` into a 3-column table:
+        | Home | vs | Away |
+        """
+        lines = text.splitlines()
+        header = lines[0] if lines else "Matchups"
+        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
+
+        pipe_rows = ["| Home | vs | Away |",
+                     "|------|----|-----|"]
+        for line in data_lines:
+            match = re.match(r'(.+?)\s+(?:vs|@)\s+(.+)', line)
+            if match:
+                pipe_rows.append(
+                    f"| {match.group(1).strip()} | vs | {match.group(2).strip()} |"
+                )
+            # Skip non-matching lines
+
+        table_text = "\n".join(pipe_rows)
+        table_block = self._format_as_table(table_text)
+        if table_block is None:
+            return []
+
+        blocks = [{
+            "type": "header",
+            "text": {"type": "plain_text", "text": header, "emoji": True},
+        }]
+        blocks.append(table_block)
+        return blocks
+
+    # ------------------------------------------------------------------
+    # Standings block formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_standings(text: str) -> bool:
+        """Heuristic: does the message look like a standings report?"""
+        return text.strip().startswith("Current Standings")
+
+    def _format_standings(self, text: str) -> list:
+        """Build Block Kit blocks for a standings message.
+
+        Parses lines like ``1: (0-0) Scireland Smooth Brains`` into a
+        4-column table: | # | Record | Team |
+        """
+        lines = text.splitlines()
+        header = lines[0] if lines else "Current Standings"
+        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
+
+        pipe_rows = ["| # | Record | Team |",
+                     "|---|---|------|"]
+        for line in data_lines:
+            match = re.match(r'(\d+):\s*\(([\d-]+)\)\s+(.+)', line)
+            if match:
+                pipe_rows.append(
+                    f"| {match.group(1)} | {match.group(2)} | {match.group(3).strip()} |"
+                )
+            # Skip non-matching lines
+
+        table_text = "\n".join(pipe_rows)
+        table_block = self._format_as_table(table_text)
+        if table_block is None:
+            return []
+
+        blocks = [{
+            "type": "header",
+            "text": {"type": "plain_text", "text": header, "emoji": True},
+        }]
+        blocks.append(table_block)
+        return blocks
 
     def _build_blocks(self, text: str) -> Optional[list]:
         """Build a Block Kit ``blocks`` array from *text*, or None.
@@ -476,6 +556,18 @@ class Slack:
             pr_blocks = self._format_power_rankings(text)
             if pr_blocks:
                 return pr_blocks
+
+        # 6. Matchups
+        if self._is_matchups(text):
+            mu_blocks = self._format_matchups(text)
+            if mu_blocks:
+                return mu_blocks
+
+        # 7. Standings
+        if self._is_standings(text):
+            st_blocks = self._format_standings(text)
+            if st_blocks:
+                return st_blocks
 
         return None
 
