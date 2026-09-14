@@ -555,6 +555,42 @@ class TestSlackScoreboardBlocks:
         table_blocks = [b for b in blocks if b.get("type") == "table"]
         assert len(table_blocks) == 1
 
+    def test_scoreboard_split_into_two_tables(self, slack_web_api):
+        """Combined actual + projected scoreboard should produce two tables.
+
+        The scoreboard message contains Score Update and Approximate Projected Scores
+        sections. Both should be rendered as separate tables with their own headers.
+        """
+        text = (
+            "Score Update\n"
+            "DKNG 120.34 - 98.56 PNLF\n"
+            "TEAM2 85.00 - 100.50 TEAM3\n"
+            "\n"
+            "Approximate Projected Scores\n"
+            "DKNG 115.00 - 105.00 PNLF\n"
+            "TEAM2 90.00 - 110.00 TEAM3"
+        )
+        blocks = slack_web_api._format_scoreboard(text)
+        # Expect 2 headers + 2 tables = 4 blocks
+        headers = [b for b in blocks if b.get("type") == "header"]
+        tables = [b for b in blocks if b.get("type") == "table"]
+        assert len(headers) == 2
+        assert len(tables) == 2
+        # Check headers
+        assert headers[0]["text"]["text"] == "Score Update"
+        assert headers[1]["text"]["text"] == "Approximate Projected Scores"
+        # Check teams in first table
+        rows1 = tables[0]["rows"]
+        assert rows1[1][0]["text"] == "DKNG"
+        assert rows1[1][4]["text"] == "PNLF"
+        # Check teams in second table
+        rows2 = tables[1]["rows"]
+        assert rows2[1][0]["text"] == "DKNG"
+        assert rows2[1][4]["text"] == "PNLF"
+        # Unique block_ids
+        block_ids = [t["block_id"] for t in tables]
+        assert len(set(block_ids)) == len(block_ids)
+
     def test_scoreboard_header_block(self, slack_web_api):
         """First block should be a header with the scoreboard title."""
         text = "Score Update\nDKNG 120.34 - 98.56 PNLF"

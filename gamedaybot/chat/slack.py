@@ -362,37 +362,77 @@ class Slack:
                                     "Approximate Projected Scores"))
 
     def _format_scoreboard(self, text: str) -> list:
-        """Build a Block Kit table block from a scoreboard-style message.
+        """Build a Block Kit table blocks from a scoreboard-style message.
 
-        Parses lines like ``DKNG 120.34 -  98.56 PNLF`` into a 5-column
-        pipe table: | Home | Score |  | Score | Away |
+        The scoreboard message may contain two sections:
+          * Score Update (actual scores)
+          * Approximate Projected Scores (projected scores)
+
+        Both sections are rendered as separate tables with distinct sub-headers
+        for clarity. Each section gets a table block with unique block_id.
         """
         lines = text.splitlines()
-        header = lines[0] if lines else "Scoreboard"
-        data_lines = [ln.strip() for ln in lines[1:] if ln.strip()]
-
-        pipe_rows = ["| Home | Score | vs | Score | Away |",
-                     "|------|-------|-----|-------|------|"]
-        for line in data_lines:
-            match = re.match(r'(\S+)\s+([\d.]+)\s+-\s+([\d.]+)\s+(\S+)', line)
-            if match:
-                pipe_rows.append(
-                    f"| {match.group(1)} | {match.group(2)} | - "
-                    f"| {match.group(3)} | {match.group(4)} |"
-                )
-            # Skip non-matching lines (e.g., secondary section headers) to avoid empty cells
-
-        table_text = "\n".join(pipe_rows)
-        table_block = self._format_as_table(table_text)
-        if table_block is None:
+        if not lines:
             return []
 
-        blocks = [{
-            "type": "header",
-            "text": {"type": "plain_text", "text": header, "emoji": True},
-        }]
-        blocks.append(table_block)
-        return blocks
+        # Split the message into sections by detecting the two known headers.
+        # The first line is always a header, subsequent lines may contain a second
+        # header ("Approximate Projected Scores") that starts a new section.
+        sections = []
+        current_header = None
+        current_data = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Section header detection
+            if stripped == "Score Update" or stripped == "Approximate Projected Scores":
+                # Flush previous section
+                if current_header is not None:
+                    sections.append((current_header, current_data))
+                current_header = stripped
+                current_data = []
+            else:
+                # Data line
+                if current_header is not None:
+                    current_data.append(stripped)
+        if current_header is not None:
+            sections.append((current_header, current_data))
+
+        blocks = []
+        table_index = 0
+        for section_header, data_lines in sections:
+            # Build a table for this section
+            pipe_rows = ["| Home | Score | vs | Score | Away |",
+                         "|------|-------|-----|-------|------|"]
+            for line in data_lines:
+                match = re.match(r'(\S+)\s+([\d.]+)\s+-\s+([\d.]+)\s+(\S+)', line)
+                if match:
+                    pipe_rows.append(
+                        f"| {match.group(1)} | {match.group(2)} | - "
+                        f"| {match.group(3)} | {match.group(4)} |"
+                    )
+            # Skip empty sections
+            if len(pipe_rows) <= 2:
+                continue
+
+            table_text = "\n".join(pipe_rows)
+            table_block = self._format_as_table(table_text)
+            if table_block is None:
+                continue
+
+            # Ensure unique block_id per table
+            table_block["block_id"] = f"fantasy_table_{table_index}"
+            table_index += 1
+
+            # Sub-header for this section
+            blocks.append({
+                "type": "header",
+                "text": {"type": "plain_text", "text": section_header, "emoji": True},
+            })
+            blocks.append(table_block)
+
+        return blocks if blocks else []
 
     # ------------------------------------------------------------------
     # Power rankings block formatting
