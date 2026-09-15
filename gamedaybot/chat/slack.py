@@ -213,7 +213,7 @@ class Slack:
         emoji_count = sum(1 for ln in lines if _starts_with_emoji(ln))
         return emoji_count > 0
 
-    def _format_trophies(self, text: str) -> list:
+    def _format_trophies(self, text: str, custom_title: str = None) -> list:
         """Build Block Kit blocks for a trophy report message.
 
         Each trophy (emoji-prefixed header line) gets a ``header`` block
@@ -222,7 +222,7 @@ class Slack:
         """
         blocks = []
         lines = text.splitlines()
-        title = lines[0] if lines else "Trophies of the week:"
+        title = custom_title if custom_title else (lines[0] if lines else "Trophies of the week:")
         blocks.append({
             "type": "header",
             "text": {"type": "plain_text", "text": title, "emoji": True},
@@ -372,7 +372,8 @@ class Slack:
           * Trophies of the week (appended to Final Score Update)
 
         Both scoreboard sections are rendered as separate tables with distinct
-        sub-headers. Trophies are extracted and formatted separately.
+        sub-headers. Trophies are extracted and formatted separately with a
+        "Trophies This Week" header.
         """
         # If the message contains both scoreboard and trophies, split them out
         if "Trophies of the week:" in text:
@@ -382,8 +383,8 @@ class Slack:
             trophies_text = "Trophies of the week:" + parts[1].strip()
             # Format scoreboard blocks
             sb_blocks = self._format_scoreboard_core(scoreboard_text)
-            # Format trophies blocks
-            trophy_blocks = self._format_trophies(trophies_text)
+            # Format trophies blocks with custom header
+            trophy_blocks = self._format_trophies(trophies_text, custom_title="Trophies This Week")
             # Combine with a divider between them
             blocks = []
             if sb_blocks:
@@ -392,10 +393,9 @@ class Slack:
                 if blocks:
                     blocks.append({"type": "divider"})
                 # Skip the first trophy header (main "Trophies of the week:") to avoid duplication
-                if len(trophy_blocks) > 1:
-                    blocks.extend(trophy_blocks[1:])
-                else:
-                    blocks.extend(trophy_blocks)
+                # The first block is now "Trophies This Week" which we want to keep
+                # Keep all trophy blocks as-is
+                blocks.extend(trophy_blocks)
             return blocks if blocks else []
 
         # Single scoreboard section (no trophies)
