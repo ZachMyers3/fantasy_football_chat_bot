@@ -358,26 +358,57 @@ class Slack:
     def _is_scoreboard(text: str) -> bool:
         """Heuristic: does the message look like a scoreboard?"""
         stripped = text.strip()
-        return stripped.startswith(("Score Update",
-                                    "Approximate Projected Scores"))
+        # Scoreboard messages may be prefixed with "Final " for the Tuesday final report
+        first_line = stripped.splitlines()[0].strip() if stripped.splitlines() else ""
+        return first_line in ("Score Update", "Approximate Projected Scores",
+                              "Final Score Update") or first_line.startswith("Final ")
 
     def _format_scoreboard(self, text: str) -> list:
         """Build a Block Kit table blocks from a scoreboard-style message.
 
-        The scoreboard message may contain two sections:
-          * Score Update (actual scores)
+        The scoreboard message may contain:
+          * Score Update (actual scores) / Final Score Update
           * Approximate Projected Scores (projected scores)
+          * Trophies of the week (appended to Final Score Update)
 
-        Both sections are rendered as separate tables with distinct sub-headers
-        for clarity. Each section gets a table block with unique block_id.
+        Both scoreboard sections are rendered as separate tables with distinct
+        sub-headers. Trophies are extracted and formatted separately.
         """
+        # If the message contains both scoreboard and trophies, split them out
+        if "Trophies of the week:" in text:
+            # Split scoreboard part from trophies part
+            parts = text.split("Trophies of the week:", 1)
+            scoreboard_text = parts[0].strip()
+            trophies_text = "Trophies of the week:" + parts[1].strip()
+            # Format scoreboard blocks
+            sb_blocks = self._format_scoreboard_core(scoreboard_text)
+            # Format trophies blocks
+            trophy_blocks = self._format_trophies(trophies_text)
+            # Combine with a divider between them
+            blocks = []
+            if sb_blocks:
+                blocks.extend(sb_blocks)
+            if trophy_blocks:
+                if blocks:
+                    blocks.append({"type": "divider"})
+                # Skip the first trophy header (main "Trophies of the week:") to avoid duplication
+                if len(trophy_blocks) > 1:
+                    blocks.extend(trophy_blocks[1:])
+                else:
+                    blocks.extend(trophy_blocks)
+            return blocks if blocks else []
+
+        # Single scoreboard section (no trophies)
+        return self._format_scoreboard_core(text)
+
+    def _format_scoreboard_core(self, text: str) -> list:
+        """Core formatting of scoreboard without trophy handling."""
         lines = text.splitlines()
         if not lines:
             return []
 
         # Split the message into sections by detecting the two known headers.
-        # The first line is always a header, subsequent lines may contain a second
-        # header ("Approximate Projected Scores") that starts a new section.
+        # Header may be prefixed with "Final " for Tuesday final report.
         sections = []
         current_header = None
         current_data = []
@@ -385,8 +416,13 @@ class Slack:
             stripped = line.strip()
             if not stripped:
                 continue
-            # Section header detection
-            if stripped == "Score Update" or stripped == "Approximate Projected Scores":
+            # Normalize header detection
+            header_match = stripped
+            # Strip "Final " prefix for section detection
+            norm_header = stripped
+            if stripped.startswith("Final "):
+                norm_header = stripped[6:].strip()
+            if norm_header in ("Score Update", "Approximate Projected Scores"):
                 # Flush previous section
                 if current_header is not None:
                     sections.append((current_header, current_data))
