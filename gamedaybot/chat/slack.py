@@ -380,7 +380,8 @@ class Slack:
             # Split scoreboard part from trophies part
             parts = text.split("Trophies of the week:", 1)
             scoreboard_text = parts[0].strip()
-            trophies_text = "Trophies of the week:" + parts[1].strip()
+            # Add newline after prefix so first trophy line is on its own line
+            trophies_text = "Trophies of the week:\n" + parts[1].strip()
             # Format scoreboard blocks
             sb_blocks = self._format_scoreboard_core(scoreboard_text)
             # Format trophies blocks with custom header
